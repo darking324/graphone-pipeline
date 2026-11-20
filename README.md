@@ -29,7 +29,12 @@ python scripts/run_pipeline.py --phases news,jobs
 ```
 
 Papers carry GitHub URLs + live star counts, filled in by
-`scripts/enrich_github.py` (resumable; see below).
+`scripts/enrich_github.py` (resumable; see below) — **359 of the 1,200
+papers have a verified GitHub repo, 356 of those have a live star
+count** (269 with ≥1 star; 87 repos exist but have 0 stars so far).
+Repos are found only via the paper's own arXiv comment (84) or a
+README that literally cites the paper's arXiv ID (275); the other 841
+papers have no verified repo and keep those fields empty.
 
 ## Architecture (Phases I–VI)
 
@@ -161,7 +166,11 @@ graphone-pipeline/
 - GitHub's unauthenticated API allows 60 core requests/hour and
   10 search requests/minute, shared with the whole egress IP — star
   enrichment fills in over successive runs rather than failing the
-  pipeline.
+  pipeline. The full 1,200-paper enrichment took ~3 hours across 7
+  resume-loop iterations.
+- 3 comment-linked repos returned no star count (repo deleted, renamed
+  or private); their URLs are kept (they come from the arXiv comment)
+  with stars left null rather than guessed.
 - Papers with Code's API is dead (it redirects to Hugging Face Papers);
   paper↔repo correlation uses arXiv comments + GitHub README search
   instead.
