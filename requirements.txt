@@ -1,0 +1,7 @@
+aiohttp>=3.10
+requests>=2.32
+beautifulsoup4>=4.12
+feedparser>=6.0
+lxml>=5.0
+reportlab>=4.0
+pypdf>=4.0  # used by docs/build_architecture_pdf.py to verify page count
