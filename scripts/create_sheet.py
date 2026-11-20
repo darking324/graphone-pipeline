@@ -97,20 +97,43 @@ def main() -> int:
     print(f"Spreadsheet ID: {spreadsheet_id}")
 
     print("Adding tabs...")
+    # Pre-size each tab's grid: the API only auto-expands a sheet's grid
+    # so far, and values.update fails once a range starts beyond the
+    # current rowCount ("Range exceeds grid limits").
+    add_requests = []
+    for name, filename in TABS:
+        rows = read_csv_rows(os.path.join(OUTPUT_DIR, filename))
+        add_requests.append({"addSheet": {"properties": {
+            "title": name,
+            "gridProperties": {
+                "rowCount": len(rows) + 5,
+                "columnCount": max(len(r) for r in rows),
+            },
+        }}})
     run_gws([
         "sheets", "spreadsheets", "batchUpdate",
         "--params", json.dumps({"spreadsheetId": spreadsheet_id}),
-        "--json", json.dumps({"requests": [
-            {"addSheet": {"properties": {"title": name}}} for name, _ in TABS
-        ]}),
+        "--json", json.dumps({"requests": add_requests}),
     ])
 
     for name, filename in TABS:
         rows = read_csv_rows(os.path.join(OUTPUT_DIR, filename))
         print(f"Writing {name}: {len(rows)-1} data rows...")
-        # values.update in chunks of 500 rows (header + data)
-        for start in range(0, len(rows), 500):
-            chunk = rows[start:start + 500]
+        # values.update in size-capped chunks: the CLI takes --json as a
+        # single argv string, and Linux caps one argument at 128 KiB, so
+        # keep each JSON payload well under that (rows vary a lot in size —
+        # news full-text can be several KB per row).
+        start = 0
+        while start < len(rows):
+            chunk: list[list[str]] = []
+            size = 0
+            while start + len(chunk) < len(rows):
+                row = rows[start + len(chunk)]
+                row_json = len(json.dumps(row))
+                if chunk and size + row_json > 90_000:
+                    break
+                chunk.append(row)
+                size += row_json
             range_a1 = f"'{name}'!A{start + 1}"
             run_gws([
                 "sheets", "spreadsheets", "values", "update",
@@ -121,6 +144,7 @@ def main() -> int:
                 }),
                 "--json", json.dumps({"values": chunk}),
             ])
+            start += len(chunk)
 
     print("Sharing publicly (anyone with the link can view)...")
     run_gws([
