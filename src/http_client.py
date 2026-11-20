@@ -82,17 +82,34 @@ class AsyncFetcher:
             await self._session.close()
 
     # -- robots ---------------------------------------------------------
-    def robots_allowed(self, url: str) -> bool:
-        """Best-effort robots.txt check for ordinary web pages (not APIs)."""
+    async def robots_allowed(self, url: str) -> bool:
+        """Best-effort robots.txt check for ordinary web pages (not APIs).
+
+        NOTE: robots.txt is fetched with this session (proper User-Agent
+        through the egress proxy), NOT with urllib.robotparser.read():
+        several sites return 403 to urllib's default "Python-urllib"
+        User-Agent, and robotparser treats a 403 robots.txt as
+        "disallow all" — a false negative that blocked every article.
+        """
         parsed = urllib.parse.urlparse(url)
         host = parsed.netloc
         if host not in self._robots:
             rp = urllib.robotparser.RobotFileParser()
             try:
-                rp.set_url(f"{parsed.scheme}://{host}/robots.txt")
-                rp.read()
+                assert self._session is not None
+                robots_url = f"{parsed.scheme}://{host}/robots.txt"
+                async with self._session.get(
+                    robots_url, timeout=aiohttp.ClientTimeout(total=15)
+                ) as resp:
+                    if resp.status == 200:
+                        body = await resp.text()
+                        rp.parse(body.splitlines())
+                    else:
+                        # Unreadable robots.txt: fail open (cannot read the
+                        # rules, so do not invent a disallow).
+                        rp.parse([])
             except Exception:
-                return True  # fail open: unreachable robots.txt = allowed
+                rp.parse([])
             self._robots[host] = rp
         try:
             return self._robots[host].can_fetch(USER_AGENT, url)
@@ -104,7 +121,7 @@ class AsyncFetcher:
         self, url: str, *, accept: str | None = None, check_robots: bool = False
     ) -> tuple[int, bytes, dict]:
         """GET with retries. Returns (status, body, headers)."""
-        if check_robots and not self.robots_allowed(url):
+        if check_robots and not await self.robots_allowed(url):
             return 451, b"", {"X-Robots": "disallowed"}
 
         host = urllib.parse.urlparse(url).netloc

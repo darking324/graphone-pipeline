@@ -93,10 +93,25 @@ async def collect(
                 continue
             fresh.append((entry, dt))
         fresh = fresh[:MAX_ARTICLES_PER_SOURCE]
-        # fetch full texts concurrently (fetcher enforces per-host politeness)
-        texts = await asyncio.gather(
-            *[_fetch_article(fetcher, getattr(e, "link", "")) for e, _ in fresh]
-        )
+        # Full text, in order of preference:
+        #  1. content:encoded in the feed itself (MIT Tech Review ships it)
+        #  2. the article page, fetched only when robots.txt allows it
+        #  3. the feed summary (never empty-handed)
+        feed_texts: list[str] = []
+        to_fetch: list[str] = []
+        for entry, _ in fresh:
+            content = getattr(entry, "content", None)
+            text = ""
+            if content:
+                raw = content[0].get("value", "") if isinstance(content[0], dict) else getattr(content[0], "value", "")
+                text = BeautifulSoup(raw or "", "lxml").get_text(" ", strip=True)
+            feed_texts.append(text)
+            to_fetch.append("" if text else getattr(entry, "link", ""))
+        async def _maybe_fetch(url: str) -> str:
+            return await _fetch_article(fetcher, url) if url else ""
+
+        fetched = await asyncio.gather(*[_maybe_fetch(u) for u in to_fetch])
+        texts = [ft or fx for ft, fx in zip(feed_texts, fetched)]
         for (entry, dt), full_text in zip(fresh, texts):
             title = getattr(entry, "title", "") or ""
             link = getattr(entry, "link", "") or ""
